@@ -16,6 +16,9 @@
 // My libraries
 #include "config.h"
 
+/*###############################################################################
+                               DATA UTILITIES
+###############################################################################*/
 typedef struct segment {
     uint8_t* data;
     bool     rcvd;
@@ -32,7 +35,32 @@ _Noreturn static void ERROR(const char* str) {
     exit(EXIT_FAILURE);
 }
 
+void dump(uint32_t i, FILE* fd, uint32_t len) {
+    ssize_t written = fwrite (
+        segs[i].data, 1, len, fd
+    );
+    if (written < 0)
+        ERROR("write()");
+}
+
+static uint64_t timedelta(struct timespec t1, struct timespec t2) {
+    return (t1.tv_sec - t2.tv_sec)*1000 + (t1.tv_nsec - t2.tv_nsec)/1000000;
+}
+
+static uint64_t nextTurn(struct timespec curr, struct timespec last) {
+    return (timedelta(curr,last) < TIMEOUT_MS) ? TIMEOUT_MS - timedelta(curr,last) : 0;
+}
+
+void safe_clock_gettime(clockid_t clockid, struct timespec *tp) {
+    if (clock_gettime(clockid, tp) != 0)
+        ERROR("clock_gettime()");
+}
+
+/*###############################################################################
+                             NETWORK UTILITIES
+###############################################################################*/
 void openSocket() {
+
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0)
         ERROR("socket()");
@@ -104,22 +132,6 @@ void receive() {
     }
 }
 
-static uint64_t timedelta(struct timespec t1, struct timespec t2) {
-    return (t1.tv_sec - t2.tv_sec)*1000 + (t1.tv_nsec - t2.tv_nsec)/1000000;
-}
-
-static uint64_t nextTurn(struct timespec curr, struct timespec last) {
-    return (timedelta(curr,last) < TIMEOUT_MS) ? TIMEOUT_MS - timedelta(curr,last) : 0;
-}
-
-void dump(uint32_t i, FILE* fd, uint32_t len) {
-    ssize_t written = fwrite (
-        segs[i].data, 1, len, fd
-    );
-    if (written < 0)
-        ERROR("write()");
-}
-
 int main(int argc, char **argv) {
     
     /*###############################################################################
@@ -136,10 +148,7 @@ int main(int argc, char **argv) {
     }
 
     int conv = inet_pton(
-        AF_INET,
-        argv[1],
-        &addr
-    );
+        AF_INET, argv[1], &addr);
     if (conv != 1) {
         printf("IP Adress invalid\n");
         return -1;
@@ -166,12 +175,12 @@ int main(int argc, char **argv) {
 
         for (; lst < MIN(fst + WINDOW_SIZE, segments); lst++) {
             requestSegment(lst*1000, MIN(lst*1000 + 1000, sz));
-            clock_gettime(CLOCK_REALTIME, &segs[lst].sent);
+            safe_clock_gettime(CLOCK_REALTIME, &segs[lst].sent);
             segs[lst].data = malloc(1000);
         }
 
         struct timespec curr_time; 
-        clock_gettime(CLOCK_REALTIME, &curr_time);
+        safe_clock_gettime(CLOCK_REALTIME, &curr_time);
 
         uint64_t wait = TIMEOUT_MS;
         for (uint32_t i = fst; i < lst; i++) {
@@ -185,8 +194,8 @@ int main(int argc, char **argv) {
             ps.fd = sockfd;
             ps.events = POLLIN;
             ps.revents = 0;
+                
         int rcvd = poll(&ps, 1, wait);
-
         if (rcvd < 0)
             ERROR("poll()");
         else if (rcvd > 0 && ((ps.revents & POLLIN) != 0)) {
@@ -203,11 +212,13 @@ int main(int argc, char **argv) {
         for (uint32_t i = fst; i < lst; i++)
             if (!segs[i].rcvd && timedelta(segs[i].sent, curr_time) > TIMEOUT_MS) {
                 requestSegment(i*1000, MIN(i*1000 + 1000, sz));
-                clock_gettime(CLOCK_REALTIME, &segs[i].sent);
+                safe_clock_gettime(CLOCK_REALTIME, &segs[i].sent);
             }
     }
 
     free(segs);
+    if (close(sockfd) != 0)
+        ERROR("close(sockfd)");
     if (fclose(fd) != 0) 
         ERROR("fclose()");
 
