@@ -17,7 +17,7 @@
 #include "config.h"
 
 /*###############################################################################
-                               DATA UTILITIES
+                            DATA TYPES AND UTILITIES
 ###############################################################################*/
 typedef struct segment {
     uint8_t* data;
@@ -121,7 +121,11 @@ void receive() {
             continue;
 
         uint32_t start, len;
-        int matched = sscanf((char*) buffer, "DATA %" SCNu32 " %" SCNu32, &start, &len);
+        int matched = sscanf((char*) buffer, 
+            "DATA %" SCNu32 " %" SCNu32 "\n", 
+            &start, 
+            &len
+        );
 
         if (matched == 2 && !segs[start/1000].rcvd) {
             uint8_t *data = memchr(buffer, '\n', 30) + 1;
@@ -170,13 +174,19 @@ int main(int argc, char **argv) {
     openSocket();
 
     segs = malloc(segments * sizeof(Segment));
+    if (segs == NULL) {
+        ERROR("malloc()");
+    }
     uint32_t fst = 0, lst = 0;
     while (fst < segments) {
 
         for (; lst < MIN(fst + WINDOW_SIZE, segments); lst++) {
             requestSegment(lst*1000, MIN(lst*1000 + 1000, sz));
             safe_clock_gettime(CLOCK_REALTIME, &segs[lst].sent);
-            segs[lst].data = malloc(1000);
+            uint8_t *m = malloc(1000);
+            if (m == NULL)
+                ERROR("malloc()");
+            segs[lst].data = m;
         }
 
         struct timespec curr_time; 
